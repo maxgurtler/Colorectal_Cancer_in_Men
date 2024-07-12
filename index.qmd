@@ -1,0 +1,412 @@
+---
+title: "Colorectal Cancer in Men"
+author: "Max Gurtler"
+format: dashboard
+theme: "lux"
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r}
+# Load packages 
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse, 
+               here,
+               readr,
+               readxl,
+               sf,
+               bslib, 
+               bsicons,
+               rnaturalearth, 
+               plotly, 
+               countrycode, 
+               htmltools, 
+               reactable,
+               janitor,
+               htmlwidgets
+               )
+```
+
+```{r}
+# Load data sets
+new_cases_full <- read.csv(here("data/new_cases_per_100k_men.csv"))
+deaths_full <- read.csv(here("data/deaths_per_100k_men.csv"))
+geo_names <- read_excel(here("data/geo_names.xlsx"))
+```
+
+```{r}
+# Clean column names and select columns from 1999 to 2019 only
+new_cases_clean <- new_cases_full %>% 
+  select(country, "X1999":"X2019") %>% 
+  rename_with(~str_replace(., "X", ""), starts_with("X"))
+
+deaths_clean <- deaths_full %>% 
+  select(country, "X1999":"X2019") %>% 
+  rename_with(~str_replace(., "X", ""), starts_with("X"))
+```
+
+```{r}
+# Delete unnecessary data sets
+rm(list = "new_cases_full", "deaths_full")
+```
+
+```{r}
+# Which countries are in 'new_cases_clean' but not in 'deaths_clean' ?
+# setdiff(new_cases_clean$country, deaths_clean$country)
+```
+
+
+```{r}
+# Which countries are in 'deaths_clean' but not in 'new_cases_clean' ?
+# setdiff(deaths_clean$country, new_cases_clean$country)
+```
+
+```{r}
+# Since we have data for 'Czech Republic' and 'Slovak Republic' in both datasets, we can remove 'Czechoslovakia'
+deaths_clean <- deaths_clean %>% 
+  filter(country != "Czechoslovakia")
+```
+
+```{r}
+# Before joining 'deaths_clean' and 'new_cases_clean', we need to pivot both data sets
+new_cases_long <- new_cases_clean %>% 
+  pivot_longer(cols = c("1999":"2019"),
+               names_to = "year", 
+               values_to = "new_cases_per_100k")
+
+deaths_long <- deaths_clean %>% 
+  pivot_longer(cols = c("1999":"2019"),
+               names_to = "year", 
+               values_to = "deaths_per_100k")
+```
+
+```{r}
+# Delete unnecessary data sets
+rm(list = "deaths_clean", "new_cases_clean")
+```
+
+```{r}
+# Join data sets
+colorectal_cancer_men <- left_join(new_cases_long, deaths_long, by = c("country", "year"))
+```
+
+```{r}
+# Delete unnecessary data sets
+rm(list = "deaths_long", "new_cases_long")
+```
+
+
+```{r}
+# Remove 'Hong Kong, China', 'French Polynesia' and 'Serbia and Montenegro' who have a lot of missing data
+colorectal_cancer_men <- colorectal_cancer_men %>% 
+  filter(country != "Hong Kong, China") %>% 
+  filter(country != "French Polynesia") %>%
+  filter(country != "Serbia and Montenegro")
+```
+
+```{r}
+# No more missing data
+#colorectal_cancer_men %>% 
+  #filter(is.na(new_cases_per_100k))
+
+#colorectal_cancer_men %>% 
+  #filter(is.na(deaths_per_100k))
+```
+
+```{r}
+# Which countries are in 'geo_names' but not in 'colorectal_cancer_men' ?
+# setdiff(geo_names$Name, colorectal_cancer_men$country)
+```
+
+```{r}
+# Rename discordant country names
+colorectal_cancer_men <- colorectal_cancer_men %>%
+  mutate(country = ifelse(country == "USA", "United States", country)) %>%
+  mutate(country = ifelse(country == "UAE", "United Arab Emirates", country)) %>%
+  mutate(country = ifelse(country == "UK", "United Kingdom", country))
+
+geo_names <- geo_names %>% 
+  mutate(Name = ifelse(Name == "Macedonia, FYR", "North Macedonia", Name)) %>% 
+  mutate(Name = ifelse(Name == "Swaziland", "Eswatini", Name))
+```
+
+```{r}
+# Remove countries from the 'colorectal_cancer_men' data set that are not in 'geo_names'
+
+countries_to_remove_colo <- c("American Samoa", "Bermuda", "Cook Is", "Greenland", "Guam", 
+                         "Northern Mariana Islands", "Niue", "Puerto Rico", "Tokelau", 
+                         "Virgin Islands (U.S.)")
+
+colorectal_cancer_men <- colorectal_cancer_men %>%
+  filter(!country %in% countries_to_remove_colo)
+```
+
+```{r}
+# Remove countries from the 'geo_names' data set that are not in 'colorectal_cancer_men'
+
+countries_to_remove_geo <- c("Holy See", "Hong Kong, China", "Liechtenstein")
+
+geo_names <- geo_names %>% 
+  filter(!Name %in% countries_to_remove_geo)
+```
+
+```{r}
+# Check if data is clean
+# setdiff(colorectal_cancer_men$country, geo_names$Name)
+```
+
+```{r}
+# Joining iso codes to the 'colorectal_cancer_men' data set
+colorectal_cancer_men <- left_join(colorectal_cancer_men, geo_names, by = c("country" = "Name")) %>% 
+  select(country, geo, year, new_cases_per_100k, deaths_per_100k)
+```
+
+```{r}
+# Putting the iso codes in upper case
+colorectal_cancer_men <- colorectal_cancer_men %>% 
+  mutate(geo = str_to_upper(geo))
+```
+
+
+```{r}
+# values for value boxes
+highest_new_cases_2019 <- colorectal_cancer_men %>%
+  filter(year == "2019") %>% 
+  arrange(desc(new_cases_per_100k)) %>% 
+  head(1) %>% 
+  pull(new_cases_per_100k)
+
+lowest_new_cases_2019 <- colorectal_cancer_men %>%
+  filter(year == "2019") %>%
+  arrange(new_cases_per_100k) %>% 
+  head(1) %>% 
+  pull(new_cases_per_100k)
+
+highest_deaths_2019 <- colorectal_cancer_men %>%
+  filter(year == "2019") %>% 
+  arrange(desc(deaths_per_100k)) %>% 
+  head(1) %>% 
+  pull(deaths_per_100k)
+
+lowest_deaths_2019 <- colorectal_cancer_men %>%
+  filter(year == "2019") %>% 
+  arrange(deaths_per_100k) %>% 
+  head(1) %>% 
+  pull(deaths_per_100k)
+```
+
+```{r}
+colorectal1999 <- colorectal_cancer_men %>% 
+  filter(year == "1999") %>%
+  rename(deaths_1999 = deaths_per_100k) %>% 
+  select(country, deaths_1999)
+
+colorectal2019 <- colorectal_cancer_men %>% 
+  filter(year == "2019") %>%
+  rename(deaths_2019 = deaths_per_100k) %>% 
+  select(country, deaths_2019)
+
+colorectal_1999_2019 <- left_join(colorectal1999, colorectal2019, by = "country")
+
+colorectal_1999_2019 <- colorectal_1999_2019 %>% 
+  mutate(increase = deaths_2019 - deaths_1999) %>% 
+  mutate(increase_percentage = round((increase / deaths_1999) * 100, 1))
+
+increase_mortality <- colorectal_1999_2019 %>%
+  arrange(desc(increase_percentage)) %>% 
+  head(1) %>% 
+  pull(increase_percentage)
+
+increase_mortality_value <- paste0("+", increase_mortality, " ", "%")
+```
+
+```{r}
+highest_deaths <- value_box(
+title = "Brunei (2019)",
+value = highest_deaths_2019,
+showcase = bsicons::bs_icon("hospital"),
+theme = value_box_theme(bg = "#000080"),
+p("Highest Deaths per 100k"))
+
+lowest_deaths <- value_box(
+title = "Bangladesh (2019)",
+value = lowest_deaths_2019,
+showcase = bsicons::bs_icon("bandaid"),
+theme = value_box_theme(bg = "#10A5F5"),
+p("Lowest Deaths per 100k"))
+
+mortality_percentage <- value_box(
+title = "Bulgaria (2019)",
+value = increase_mortality_value,
+showcase = bsicons::bs_icon("graph-up"),
+theme = value_box_theme(bg = "#B7C9E2"),
+p("Highest Increase in Mortality"))
+
+highest_new_cases <- value_box(
+title = "Andorra (2019)",
+value = highest_new_cases_2019,
+showcase = bsicons::bs_icon("arrow-bar-up"),
+theme = value_box_theme(bg = "#93E9BE"),
+p("Highest New Cases per 100k"))
+
+lowest_new_cases <- value_box(
+title = "Nepal (2019)",
+value = lowest_new_cases_2019,
+showcase = bsicons::bs_icon("arrow-bar-down"),
+theme = value_box_theme(bg = "#008080"),
+p("Lowest New Cases per 100k"))
+```
+
+
+```{r}
+# WORLD MAP
+```
+
+```{r}
+#create map
+colorectal_map <- plot_geo(colorectal_cancer_men, locationmode = 'world') %>%
+  add_trace(
+    z = ~deaths_per_100k,
+    locations = ~geo,
+    frame = ~year,
+    color = ~deaths_per_100k,
+    colorscale = list(c(0, "#B7C9E2"), c(0.5, "#10A5F5"), c(1, "#000080")), # Custom colors
+    reversescale = FALSE
+  ) %>%
+  colorbar(title = 'Deaths per 100k') %>%
+  layout(
+    geo = list(
+      showframe = FALSE,
+      projection = list(type = 'equirectangular')
+    )
+  )
+```
+
+```{r}
+# The map does not include Andorra, so I need to update the first value box
+
+# remove it from the dataset to avoid confusion
+colorectal_cancer_men <- colorectal_cancer_men %>% filter(country != "Andorra")
+
+highest_new_cases_2019 <- colorectal_cancer_men %>%
+  filter(year == "2019") %>% 
+  arrange(desc(new_cases_per_100k)) %>% 
+  head(1) %>% 
+  pull(new_cases_per_100k)
+
+highest_new_cases <- value_box(
+title = "Taiwan (2019)",
+value = highest_new_cases_2019,
+showcase = bsicons::bs_icon("arrow-bar-up"),
+theme = value_box_theme(bg = "#93E9BE"),
+p("Highest New Cases per 100k"))
+```
+
+```{r}
+# TOP 20 PLOT
+```
+
+```{r}
+top_20_countries <- colorectal_cancer_men %>%
+  filter(year == "2019") %>% 
+  arrange(desc(new_cases_per_100k)) %>% 
+  head(20) %>%
+  mutate(tooltip_label = paste(country,
+                               round(new_cases_per_100k, 1),
+                               sep = ": ")) %>% 
+  ggplot(aes(y = reorder(country, new_cases_per_100k), 
+             x = new_cases_per_100k,
+             fill = new_cases_per_100k,
+             text = tooltip_label)) +
+  geom_col() +
+  geom_text(aes(label = round(new_cases_per_100k, 1)), 
+            nudge_x = -5,
+            color = "white",
+            size = 3.5) +
+  labs(y = "",
+       x = "New Cases per 100k") +
+  scale_fill_gradient(low = "#008080", high = "#93E9BE", guide = "none") +
+  theme(legend.position = "none") +
+  theme_minimal()
+
+top_20_countries_ggplotly <- 
+  ggplotly(top_20_countries, tooltip = "text")
+```
+
+
+# HOME
+
+## Row 1 {height=32%}
+
+```{r}
+highest_deaths
+```
+
+```{r}
+lowest_deaths
+```
+
+```{r}
+mortality_percentage
+```
+
+```{r}
+highest_new_cases
+```
+
+```{r}
+lowest_new_cases
+```
+
+
+## Row 2 {height=68%}
+
+### Col 2.1 {width=60.5%}
+
+```{r title = "Colorectal Cancer Deaths (1999-2019)"}
+colorectal_map
+```
+
+### Col 2.2 {width=39.5%}
+
+```{r title = "Top 20 Countries by New Cases per 100k (2019)"}
+top_20_countries_ggplotly
+```
+
+
+# DOWNLOAD DATA
+
+The data used in this dashboard is shown below and can be downloaded as a CSV.
+
+```{r}
+# Load packages 
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(htmltools, reactable)
+
+htmltools::browsable(
+  tagList(
+    reactable(colorectal_cancer_men, 
+              elementId = "colorectal_cancer_men_1999_2019", 
+              searchable = T, 
+              filterable = T), 
+    
+tags$button("Download as CSV", 
+            onclick = "Reactable.downloadDataCSV('colorectal_cancer_men_1999_2019')")
+  )
+)
+```
+
+
+# ABOUT
+
+This data is originally sourced from the Gapminder Foundation. The Gapminder Foundation is a non-profit venture registered in Stockholm, Sweden, that promotes sustainable global development and achievement of the United Nations Millennium Development Goals by increased use and understanding of statistics and other information about social, economic, and environmental development at local, national, and global levels.
+
+Colorectal cancer accounts for approximately 10% of all annually diagnosed cancers and cancer-related deaths worldwide. It is third most common cancer diagnosed in men. In women, incidence and mortality are approximately 25% lower than in men. These rates also vary geographically, with the highest rates seen in the most developed countries. With continuing progress in developing countries, the incidence of colorectal cancer worldwide is predicted to increase to 2.5 million new cases in 2035 (Dekker et al., 2019). 
+
+Here is a short video from Stanford Hospital on Colorectal Cancer :
+
+<iframe width="560" height="315" src="https://www.youtube.com/embed/fW4Y_poPPxg?si=BaAW-0SRQ9pr3hUx" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+
+*Source : Dekker E, Tanis PJ, Vleugels JLA, Kasi PM, Wallace MB. Colorectal cancer. Lancet. 2019 Oct 19;394(10207):1467-1480. doi: 10.1016/S0140-6736(19)32319-0. PMID: 31631858.*
